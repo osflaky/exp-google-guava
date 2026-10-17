@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+# Cancel in-progress runs for pull requests, but not for master branch pushes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: "${{ matrix.root-pom }} on JDK ${{ matrix.java }} on ${{ matrix.os }} [${{
+      matrix.expander_leg }}]"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: macos-latest
+          java: 25
+          root-pom: 'pom.xml'
+          arch: arm64
+          runner: macos-latest
+          expander_leg: macos-latest-25-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      ROOT_POM: ${{ matrix.root-pom }}
+    steps:
+    - name: 'Check out repository'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        persist-credentials: false
+      # When we specify multiple JDKs, the final one becomes the default, which is used to execute Maven itself.
+      # Our Maven configuration then specifies different JDKs to use for some of the steps:
+      # - 11 (sometimes) to *download* to support anyone who runs JDiff or our Gradle integration tests (including our doc snapshots and our Java 11 CI test run) but not to use directly
+      # - 26 for running Javadoc and javac (to help people who build Guava locally and might not use a recent JDK to run Maven)
+    - name: 'Set up JDKs'
+      uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c   # v6.0.0
+      with:
+        java-version: |-
+          ${{ matrix.java }}
+        distribution: 'temurin'
+        cache: 'maven'
+    - name: 'Install'
+      shell: bash
+      run: ./mvnw -B -Dtoolchain.skip install -U -DskipTests=true -f $ROOT_POM
+    - name: 'Test'
+      shell: bash
+      run: ./mvnw -B -P!standard-with-extra-repos -Dtoolchain.skip verify -U 
+        -Dmaven.javadoc.skip=true -Dsurefire.toolchain.version=${{ matrix.java 
+        }} -f $ROOT_POM
+    - name: 'Print Surefire reports'
+        # Note: Normally a step won't run if the job has failed, but this causes it to
+      if: ${{ failure() }}
+      shell: bash
+      run: ./util/print_surefire_reports.sh
+
+    timeout-minutes: 150
